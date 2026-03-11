@@ -67,8 +67,8 @@ public final class PiperPlayer: @unchecked Sendable {
         let playerItem = AVPlayerItem(url: URL(fileURLWithPath: path))
         try await playItemAsync(playerItem)
         try FileManager.default.removeItem(atPath: path)
-    }
-
+    }   
+    
     public func play(ssml: String, speakerId: Int32 = 0) async throws {
         let path = String.temporaryPath(extesnion: "wav")
         await piper.synthesizeSSML(ssml, speakerId: speakerId, toFileAtPath: path)
