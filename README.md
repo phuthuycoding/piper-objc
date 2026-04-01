@@ -15,7 +15,7 @@ Objective‑C bindings for the [Piper](https://github.com/rhasspy/piper) speech 
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/IhorShevchuk/piper-objc.git", from: "0.1.0")
+    .package(url: "https://github.com/phuthuycoding/piper-objc.git", from: "0.1.0")
 ]
 ```
 
