@@ -13,7 +13,7 @@ import AVFoundation
 #endif
 
 
-public class PiperPlayer {
+public final class PiperPlayer: @unchecked Sendable {
     public struct Params {
         let modelPath: String
         let configPath: String
