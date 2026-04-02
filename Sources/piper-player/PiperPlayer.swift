@@ -13,7 +13,7 @@ import AVFoundation
 #endif
 
 
-public class PiperPlayer {
+public final class PiperPlayer: @unchecked Sendable {
     public struct Params {
         let modelPath: String
         let configPath: String
@@ -68,13 +68,27 @@ public class PiperPlayer {
         try await playItemAsync(playerItem)
         try FileManager.default.removeItem(atPath: path)
     }
-    
-    public func play(ssml: String) async throws {
+
+    public func play(ssml: String, speakerId: Int32 = 0) async throws {
         let path = String.temporaryPath(extesnion: "wav")
-        await piper.synthesizeSSML(ssml, toFileAtPath: path)
+        await piper.synthesizeSSML(ssml, speakerId: speakerId, toFileAtPath: path)
         let playerItem = AVPlayerItem(url: URL(fileURLWithPath: path))
         try await playItemAsync(playerItem)
         try FileManager.default.removeItem(atPath: path)
+    }
+
+    public func synthesizeToFile(text: String) async -> String? {
+        let path = String.temporaryPath(extesnion: "wav")
+        await piper.synthesize(text, toFileAtPath: path)
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        return path
+    }
+
+    public func synthesizeSSMLToFile(ssml: String, speakerId: Int32 = 0) async -> String? {
+        let path = String.temporaryPath(extesnion: "wav")
+        await piper.synthesizeSSML(ssml, speakerId: speakerId, toFileAtPath: path)
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        return path
     }
 
     public func stopAndCancel() async {
