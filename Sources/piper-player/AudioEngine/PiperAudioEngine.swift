@@ -70,7 +70,9 @@ final class PiperAudioEngine {
         engine.connect(timePitchNode, to: engine.mainMixerNode, format: format)
 
         engine.prepare()
-        try engine.start()
+        if !engine.isRunning {
+            try engine.start()
+        }
         stateLock.lock()
         _state = .playing
         stateLock.unlock()

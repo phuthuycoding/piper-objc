@@ -33,14 +33,27 @@ final class PrefetchManager {
         pendingKeys.insert(keyStr)
         lock.unlock()
 
-        let operation = BlockOperation { [weak self] in
-            guard let self else { return }
+        let operation = BlockOperation()
+        operation.addExecutionBlock { [weak self, weak operation] in
+            guard let self, let operation, !operation.isCancelled else {
+                self?.lock.lock()
+                self?.pendingKeys.remove(keyStr)
+                self?.lock.unlock()
+                return
+            }
 
             guard let prefetchPiper = piper_objc.Piper(
                 modelPath: self.modelPath,
                 configPath: self.configPath,
                 espeakNGData: self.espeakNGData
             ) else {
+                self.lock.lock()
+                self.pendingKeys.remove(keyStr)
+                self.lock.unlock()
+                return
+            }
+
+            guard !operation.isCancelled else {
                 self.lock.lock()
                 self.pendingKeys.remove(keyStr)
                 self.lock.unlock()
@@ -55,10 +68,10 @@ final class PrefetchManager {
             }
             semaphore.wait()
 
-            if FileManager.default.fileExists(atPath: path) {
+            if !operation.isCancelled, FileManager.default.fileExists(atPath: path) {
                 self.cache.store(audioAtPath: path, for: key)
-                try? FileManager.default.removeItem(atPath: path)
             }
+            try? FileManager.default.removeItem(atPath: path)
 
             self.lock.lock()
             self.pendingKeys.remove(keyStr)

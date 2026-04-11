@@ -11,10 +11,12 @@ final class AudioCacheMetadata {
     private let metadataURL: URL
     private var isDirty = false
     private var saveWorkItem: DispatchWorkItem?
-    private let saveQueue = DispatchQueue(label: "com.piper.cache.metadata")
+    private let lock = NSLock()
 
     var totalSize: UInt64 {
-        entries.values.reduce(0) { $0 + $1.size }
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.values.reduce(0) { $0 + $1.size }
     }
 
     init(directory: URL) {
@@ -23,31 +25,36 @@ final class AudioCacheMetadata {
     }
 
     func add(key: AudioCache.CacheKey, size: UInt64) {
+        lock.lock()
         entries[key] = Entry(key: key, size: size, lastAccess: Date())
+        lock.unlock()
         scheduleSave()
     }
 
     func touch(key: AudioCache.CacheKey) {
+        lock.lock()
         entries[key]?.lastAccess = Date()
         isDirty = true
+        lock.unlock()
     }
 
     func evictOldest() -> AudioCache.CacheKey? {
+        lock.lock()
         guard let oldest = entries.values.min(by: { $0.lastAccess < $1.lastAccess }) else {
+            lock.unlock()
             return nil
         }
         entries.removeValue(forKey: oldest.key)
+        lock.unlock()
         scheduleSave()
         return oldest.key
     }
 
     func clear() {
+        lock.lock()
         entries.removeAll()
-        saveNow()
-    }
-
-    func flushIfNeeded() {
-        guard isDirty else { return }
+        isDirty = false
+        lock.unlock()
         saveNow()
     }
 
@@ -60,24 +67,34 @@ final class AudioCacheMetadata {
     }
 
     private func scheduleSave() {
+        lock.lock()
         isDirty = true
         saveWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             self?.saveNow()
         }
         saveWorkItem = workItem
-        saveQueue.asyncAfter(deadline: .now() + 1.0, execute: workItem)
+        lock.unlock()
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.0, execute: workItem)
     }
 
     private func saveNow() {
+        lock.lock()
         isDirty = false
-        guard let data = try? JSONEncoder().encode(entries) else { return }
+        let snapshot = entries
+        lock.unlock()
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
         try? data.write(to: metadataURL, options: .atomic)
     }
 
     deinit {
-        if isDirty {
-            saveNow()
+        lock.lock()
+        let dirty = isDirty
+        let snapshot = entries
+        lock.unlock()
+        if dirty {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: metadataURL, options: .atomic)
         }
     }
 }

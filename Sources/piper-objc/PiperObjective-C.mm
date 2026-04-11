@@ -269,11 +269,13 @@ static piper_synthesize_options get_piper_synthesize_options(PiperFragment *frag
     }
     @synchronized(self)
     {
-        _operationQueue = [[NSOperationQueue alloc] init];
-        _operationQueue.name = [NSString stringWithFormat:@"%@Queue", NSStringFromClass([self class])];
-        _operationQueue.maxConcurrentOperationCount = 1;
-        _operationQueue.qualityOfService = NSQualityOfServiceUserInteractive;
-        
+        if (!_operationQueue)
+        {
+            _operationQueue = [[NSOperationQueue alloc] init];
+            _operationQueue.name = [NSString stringWithFormat:@"%@Queue", NSStringFromClass([self class])];
+            _operationQueue.maxConcurrentOperationCount = 1;
+            _operationQueue.qualityOfService = NSQualityOfServiceUserInteractive;
+        }
         return _operationQueue;
     }
 }

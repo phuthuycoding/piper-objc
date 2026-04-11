@@ -27,7 +27,7 @@ public final class AudioSegmentQueue: @unchecked Sendable {
     private let cache: AudioCache
     private let prefetchManager: PrefetchManager
     private let serialQueue = DispatchQueue(label: "com.piper.segmentqueue")
-    private var playTask: Task<Void, Never>?
+    private var _playTask: Task<Void, Never>?
 
     private var _segments: [Segment] = []
     private var _currentIndex: Int = 0
@@ -117,16 +117,19 @@ public final class AudioSegmentQueue: @unchecked Sendable {
     }
 
     public func skipForward() {
-        let canSkip = serialQueue.sync { _currentIndex + 1 < _segments.count }
-        guard canSkip else { return }
-        let nextIndex = serialQueue.sync { _currentIndex + 1 }
+        let nextIndex: Int? = serialQueue.sync {
+            let next = _currentIndex + 1
+            return next < _segments.count ? next : nil
+        }
+        guard let nextIndex else { return }
         playFromIndex(nextIndex)
     }
 
     public func skipBackward() {
-        let canSkip = serialQueue.sync { _currentIndex > 0 }
-        guard canSkip else { return }
-        let prevIndex = serialQueue.sync { _currentIndex - 1 }
+        let prevIndex: Int? = serialQueue.sync {
+            return _currentIndex > 0 ? _currentIndex - 1 : nil
+        }
+        guard let prevIndex else { return }
         playFromIndex(prevIndex)
     }
 
@@ -137,8 +140,10 @@ public final class AudioSegmentQueue: @unchecked Sendable {
     }
 
     public func stop() {
-        playTask?.cancel()
-        playTask = nil
+        serialQueue.sync {
+            _playTask?.cancel()
+            _playTask = nil
+        }
         audioEngine.stop()
         prefetchManager.cancelAll()
         serialQueue.sync { _state = .idle }
@@ -146,7 +151,10 @@ public final class AudioSegmentQueue: @unchecked Sendable {
     }
 
     private func playFromIndex(_ index: Int) {
-        playTask?.cancel()
+        serialQueue.sync {
+            _playTask?.cancel()
+            _playTask = nil
+        }
         audioEngine.stop()
         prefetchManager.cancelAll()
 
@@ -156,10 +164,11 @@ public final class AudioSegmentQueue: @unchecked Sendable {
         }
         delegate?.queue(self, didChangeState: .playing(segmentIndex: index))
 
-        playTask = Task { [weak self] in
+        let task = Task { [weak self] in
             guard let self else { return }
             await self.playLoop()
         }
+        serialQueue.sync { _playTask = task }
     }
 
     private func playLoop() async {
@@ -247,15 +256,12 @@ public final class AudioSegmentQueue: @unchecked Sendable {
                 phonemeAlignments: alignments,
                 sampleRate: sr
             )
-            for word in wordTimings {
-                delegate?.queue(self, didStartSpeakingWord: word, inSegment: index)
+            if !wordTimings.isEmpty {
+                delegate?.queue(self, didProduceWordTimings: wordTimings, forSegment: index)
             }
         }
 
-        let totalSamples = streamingDelegate.totalSamplesScheduled
-        if totalSamples > 0 && sr > 0 {
-            delegate?.queue(self, progressUpdate: 1.0, inSegment: index)
-        }
+        delegate?.queue(self, progressUpdate: 1.0, inSegment: index)
     }
 
     private func playCachedFile(_ url: URL) async throws {

@@ -31,7 +31,6 @@ public final class PiperPlayer: @unchecked Sendable {
 #if canImport(AVFoundation)
     private let audioEngine = PiperAudioEngine()
     private var _streamingDelegate: PiperStreamingDelegate?
-    private let continuationLock = NSLock()
 
     private var streamingDelegate: PiperStreamingDelegate {
         if let existing = _streamingDelegate {
