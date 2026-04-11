@@ -26,7 +26,7 @@ public final class PiperPlayer: @unchecked Sendable {
     }
 
     private let piper: piper_objc.Piper
-    private let modelPath: String
+    private let params: Params
 
 #if canImport(AVFoundation)
     private let audioEngine = PiperAudioEngine()
@@ -46,7 +46,7 @@ public final class PiperPlayer: @unchecked Sendable {
     public lazy var cache = AudioCache()
 
     public lazy var queue: AudioSegmentQueue = {
-        AudioSegmentQueue(piper: piper, audioEngine: audioEngine, cache: cache, modelPath: modelPath)
+        AudioSegmentQueue(piper: piper, audioEngine: audioEngine, cache: cache, params: params)
     }()
 
 #if canImport(MediaPlayer)
@@ -78,7 +78,7 @@ public final class PiperPlayer: @unchecked Sendable {
             throw PlayerError.noPiperBackend
         }
         self.piper = piper
-        self.modelPath = params.modelPath
+        self.params = params
 #if canImport(AVFoundation)
         try FileManager.default.createTempFolderIfNeeded(at: String.temporaryFolderPath)
 #endif
@@ -105,14 +105,14 @@ public final class PiperPlayer: @unchecked Sendable {
     }
 
     public func synthesizeToFile(text: String) async -> String? {
-        let path = String.temporaryPath(extesnion: "wav")
+        let path = String.temporaryPath(fileExtension: "wav")
         await piper.synthesize(text, toFileAtPath: path)
         guard FileManager.default.fileExists(atPath: path) else { return nil }
         return path
     }
 
     public func synthesizeSSMLToFile(ssml: String, speakerId: Int32 = 0) async -> String? {
-        let path = String.temporaryPath(extesnion: "wav")
+        let path = String.temporaryPath(fileExtension: "wav")
         await piper.synthesizeSSML(ssml, speakerId: speakerId, toFileAtPath: path)
         guard FileManager.default.fileExists(atPath: path) else { return nil }
         return path

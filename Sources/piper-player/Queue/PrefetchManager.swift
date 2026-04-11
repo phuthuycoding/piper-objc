@@ -2,17 +2,19 @@ import Foundation
 import piper_objc
 
 final class PrefetchManager {
-    private let piper: piper_objc.Piper
     private let cache: AudioCache
     private let modelPath: String
+    private let configPath: String
+    private let espeakNGData: String
     private let prefetchQueue = OperationQueue()
     private var pendingKeys: Set<String> = []
     private let lock = NSLock()
 
-    init(piper: piper_objc.Piper, cache: AudioCache, modelPath: String) {
-        self.piper = piper
+    init(cache: AudioCache, modelPath: String, configPath: String, espeakNGData: String) {
         self.cache = cache
         self.modelPath = modelPath
+        self.configPath = configPath
+        self.espeakNGData = espeakNGData
         prefetchQueue.maxConcurrentOperationCount = 1
         prefetchQueue.qualityOfService = .utility
         prefetchQueue.name = "com.piper.prefetch"
@@ -33,10 +35,22 @@ final class PrefetchManager {
 
         let operation = BlockOperation { [weak self] in
             guard let self else { return }
-            let path = String.temporaryPath(extesnion: "wav")
+
+            guard let prefetchPiper = piper_objc.Piper(
+                modelPath: self.modelPath,
+                configPath: self.configPath,
+                espeakNGData: self.espeakNGData
+            ) else {
+                self.lock.lock()
+                self.pendingKeys.remove(keyStr)
+                self.lock.unlock()
+                return
+            }
+
+            let path = String.temporaryPath(fileExtension: "wav")
             let semaphore = DispatchSemaphore(value: 0)
 
-            self.piper.synthesize(segment.text, toFileAtPath: path) {
+            prefetchPiper.synthesize(segment.text, toFileAtPath: path) {
                 semaphore.signal()
             }
             semaphore.wait()

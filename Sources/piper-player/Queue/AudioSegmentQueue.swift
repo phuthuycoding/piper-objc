@@ -26,7 +26,6 @@ public final class AudioSegmentQueue: @unchecked Sendable {
     private let audioEngine: PiperAudioEngine
     private let cache: AudioCache
     private let prefetchManager: PrefetchManager
-    private let modelPath: String
     private let serialQueue = DispatchQueue(label: "com.piper.segmentqueue")
     private var playTask: Task<Void, Never>?
 
@@ -59,12 +58,16 @@ public final class AudioSegmentQueue: @unchecked Sendable {
         set { audioEngine.pitch = newValue }
     }
 
-    init(piper: piper_objc.Piper, audioEngine: PiperAudioEngine, cache: AudioCache, modelPath: String) {
+    init(piper: piper_objc.Piper, audioEngine: PiperAudioEngine, cache: AudioCache, params: PiperPlayer.Params) {
         self.piper = piper
         self.audioEngine = audioEngine
         self.cache = cache
-        self.modelPath = modelPath
-        self.prefetchManager = PrefetchManager(piper: piper, cache: cache, modelPath: modelPath)
+        self.prefetchManager = PrefetchManager(
+            cache: cache,
+            modelPath: params.modelPath,
+            configPath: params.configPath,
+            espeakNGData: params.espeakNGData
+        )
     }
 
     public func replaceAll(_ newSegments: [Segment]) {
@@ -175,7 +178,7 @@ public final class AudioSegmentQueue: @unchecked Sendable {
             delegate?.queue(self, didStartSegment: index)
 
             do {
-                try await playSegment(segment)
+                try await playSegment(segment, atIndex: index)
             } catch is CancellationError {
                 return
             } catch {
@@ -192,7 +195,7 @@ public final class AudioSegmentQueue: @unchecked Sendable {
         delegate?.queueDidFinishAll(self)
     }
 
-    private func playSegment(_ segment: Segment) async throws {
+    private func playSegment(_ segment: Segment, atIndex index: Int) async throws {
         if let cachedURL = prefetchManager.cachedPath(for: segment) {
             try await playCachedFile(cachedURL)
             return
@@ -235,6 +238,24 @@ public final class AudioSegmentQueue: @unchecked Sendable {
         }
 
         piper.delegate = nil
+
+        let alignments = streamingDelegate.getAlignments()
+        let sr = streamingDelegate.sampleRate
+        if !alignments.isEmpty && sr > 0 {
+            let wordTimings = TextTimingMapper.buildWordTimings(
+                for: segment.text,
+                phonemeAlignments: alignments,
+                sampleRate: sr
+            )
+            for word in wordTimings {
+                delegate?.queue(self, didStartSpeakingWord: word, inSegment: index)
+            }
+        }
+
+        let totalSamples = streamingDelegate.totalSamplesScheduled
+        if totalSamples > 0 && sr > 0 {
+            delegate?.queue(self, progressUpdate: 1.0, inSegment: index)
+        }
     }
 
     private func playCachedFile(_ url: URL) async throws {

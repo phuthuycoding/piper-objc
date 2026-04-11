@@ -6,3 +6,4 @@
 //
 
 #import <PiperObjective-C.h>
+#import "PiperPhonemeAlignment.h"

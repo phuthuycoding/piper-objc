@@ -10,6 +10,10 @@ final class PiperStreamingDelegate: NSObject, PiperDelegate, @unchecked Sendable
     private let minBufferSize = 4096
     private let lock = NSLock()
 
+    private(set) var totalSamplesScheduled: Int = 0
+    private(set) var sampleRate: Int = 0
+    private(set) var phonemeAlignments: [(phoneme: UInt32, sampleCount: Int)] = []
+
     init(audioEngine: PiperAudioEngine) {
         self.audioEngine = audioEngine
         super.init()
@@ -25,6 +29,7 @@ final class PiperStreamingDelegate: NSObject, PiperDelegate, @unchecked Sendable
         lock.lock()
         if !isPrepared, let piper, piper.sampleRate > 0 {
             do {
+                sampleRate = Int(piper.sampleRate)
                 try audioEngine.prepare(sampleRate: Double(piper.sampleRate))
                 isPrepared = true
             } catch {
@@ -38,6 +43,7 @@ final class PiperStreamingDelegate: NSObject, PiperDelegate, @unchecked Sendable
         if accumulatedSamples.count >= minBufferSize {
             let samples = accumulatedSamples
             accumulatedSamples.removeAll(keepingCapacity: true)
+            totalSamplesScheduled += samples.count
             lock.unlock()
 
             samples.withUnsafeBufferPointer { ptr in
@@ -49,10 +55,24 @@ final class PiperStreamingDelegate: NSObject, PiperDelegate, @unchecked Sendable
         }
     }
 
+    @objc func piperDidReceiveAudioChunk(
+        _ samples: UnsafePointer<Float>,
+        withSize count: Int,
+        sampleRate: Int,
+        alignments: [PiperPhonemeAlignment]
+    ) {
+        lock.lock()
+        for alignment in alignments {
+            phonemeAlignments.append((phoneme: alignment.phoneme, sampleCount: Int(alignment.sampleCount)))
+        }
+        lock.unlock()
+    }
+
     func flush() {
         lock.lock()
         let samples = accumulatedSamples
         accumulatedSamples.removeAll(keepingCapacity: true)
+        totalSamplesScheduled += samples.count
         lock.unlock()
 
         guard !samples.isEmpty else { return }
@@ -67,7 +87,16 @@ final class PiperStreamingDelegate: NSObject, PiperDelegate, @unchecked Sendable
         lock.lock()
         accumulatedSamples.removeAll()
         isPrepared = false
+        totalSamplesScheduled = 0
+        sampleRate = 0
+        phonemeAlignments.removeAll()
         lock.unlock()
+    }
+
+    func getAlignments() -> [(phoneme: UInt32, sampleCount: Int)] {
+        lock.lock()
+        defer { lock.unlock() }
+        return phonemeAlignments
     }
 }
 #endif
