@@ -9,12 +9,20 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class PiperPhonemeAlignment;
+
 @protocol PiperDelegate <NSObject>
 - (void)piperDidReceiveSamples:(const float* _Nonnull)samples withSize:(NSInteger)count;
+@optional
+- (void)piperDidReceiveAudioChunk:(const float* _Nonnull)samples
+                         withSize:(NSInteger)count
+                       sampleRate:(NSInteger)sampleRate
+                       alignments:(NSArray<PiperPhonemeAlignment *> *)alignments;
 @end
 
 @interface Piper : NSObject
 @property (nonatomic, weak) id<PiperDelegate> delegate;
+@property (nonatomic, readonly) NSInteger sampleRate;
 - (nullable instancetype)initWithModelPath:(NSString *)modelPath
                              andConfigPath:(NSString *)modelConfigPath;
 - (nullable instancetype)initWithModelPath:(NSString *)modelPath

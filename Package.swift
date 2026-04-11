@@ -41,6 +41,10 @@ let package = Package(
                 dependencies: [
                     .target(name: "piper-objc")
                 ]),
+        .testTarget(name: "piper-player-tests",
+                    dependencies: [
+                        .target(name: "piper-player")
+                    ]),
     ],
     cxxLanguageStandard: .cxx17
 )

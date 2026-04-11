@@ -1,10 +1,3 @@
-//
-//  PiperPlayer.swift
-//
-//
-//  Created by Ihor Shevchuk on 29.05.2024.
-//
-
 import Foundation
 import piper_objc
 
@@ -12,12 +5,11 @@ import piper_objc
 import AVFoundation
 #endif
 
-
 public final class PiperPlayer: @unchecked Sendable {
     public struct Params {
-        let modelPath: String
-        let configPath: String
-        let espeakNGData: String
+        public let modelPath: String
+        public let configPath: String
+        public let espeakNGData: String
         public init(modelPath: String,
                     configPath: String,
                     espeakNGData: String? = nil
@@ -28,18 +20,55 @@ public final class PiperPlayer: @unchecked Sendable {
         }
     }
 
-#if canImport(AVFoundation)
-    enum PlayerError: Error {
-        case noPlayer
+    public enum PlayerError: Error {
         case noPiperBackend
+        case engineNotReady
     }
-#endif
 
     private let piper: piper_objc.Piper
+    private let modelPath: String
+
 #if canImport(AVFoundation)
-    private var player: AVPlayer?
-    private var playerContinuation: CheckedContinuation<Void, any Error>?
-    private let playerContinuationLock = NSLock()
+    private let audioEngine = PiperAudioEngine()
+    private var _streamingDelegate: PiperStreamingDelegate?
+    private let continuationLock = NSLock()
+
+    private var streamingDelegate: PiperStreamingDelegate {
+        if let existing = _streamingDelegate {
+            return existing
+        }
+        let delegate = PiperStreamingDelegate(audioEngine: audioEngine)
+        delegate.setPiper(piper)
+        _streamingDelegate = delegate
+        return delegate
+    }
+
+    public lazy var cache = AudioCache()
+
+    public lazy var queue: AudioSegmentQueue = {
+        AudioSegmentQueue(piper: piper, audioEngine: audioEngine, cache: cache, modelPath: modelPath)
+    }()
+
+#if canImport(MediaPlayer)
+    public lazy var mediaSession: MediaSessionManager = {
+        MediaSessionManager(queue: queue)
+    }()
+#endif
+
+    public var playbackRate: Float {
+        get { audioEngine.rate }
+        set { audioEngine.rate = newValue }
+    }
+
+    public var pitch: Float {
+        get { audioEngine.pitch }
+        set { audioEngine.pitch = newValue }
+    }
+
+    public var volume: Float {
+        get { audioEngine.volume }
+        set { audioEngine.volume = newValue }
+    }
 #endif
 
     public init(params: Params) throws {
@@ -49,6 +78,7 @@ public final class PiperPlayer: @unchecked Sendable {
             throw PlayerError.noPiperBackend
         }
         self.piper = piper
+        self.modelPath = params.modelPath
 #if canImport(AVFoundation)
         try FileManager.default.createTempFolderIfNeeded(at: String.temporaryFolderPath)
 #endif
@@ -56,25 +86,22 @@ public final class PiperPlayer: @unchecked Sendable {
 
     deinit {
 #if canImport(AVFoundation)
+        audioEngine.stop()
         try? FileManager.default.removeTempFolderIfNeeded(at: String.temporaryFolderPath)
 #endif
     }
 
 #if canImport(AVFoundation)
     public func play(text: String) async throws {
-        let path = String.temporaryPath(extesnion: "wav")
-        await piper.synthesize(text, toFileAtPath: path)
-        let playerItem = AVPlayerItem(url: URL(fileURLWithPath: path))
-        try await playItemAsync(playerItem)
-        try FileManager.default.removeItem(atPath: path)
+        try await playStreaming {
+            self.piper.synthesize(text)
+        }
     }
 
     public func play(ssml: String, speakerId: Int32 = 0) async throws {
-        let path = String.temporaryPath(extesnion: "wav")
-        await piper.synthesizeSSML(ssml, speakerId: speakerId, toFileAtPath: path)
-        let playerItem = AVPlayerItem(url: URL(fileURLWithPath: path))
-        try await playItemAsync(playerItem)
-        try FileManager.default.removeItem(atPath: path)
+        try await playStreaming {
+            self.piper.synthesizeSSML(ssml, speakerId: speakerId)
+        }
     }
 
     public func synthesizeToFile(text: String) async -> String? {
@@ -91,78 +118,58 @@ public final class PiperPlayer: @unchecked Sendable {
         return path
     }
 
-    public func stopAndCancel() async {
-        await player?.pause()
-        player = nil
-        resumePlayerContinuation()
+    public func pause() {
+        audioEngine.pause()
     }
-#endif
-}
 
-private extension PiperPlayer {
-#if canImport(AVFoundation)
-    @MainActor
-    func playItemAsync(_ item: AVPlayerItem) async throws {
-        await stopAndCancel()
-        player = AVPlayer()
-        var observerEnd: Any?
-        var statusObserver: NSKeyValueObservation?
-        try await withCheckedThrowingContinuation { [weak self] continuation in
+    public func resume() {
+        audioEngine.resume()
+    }
 
-            let continuation = continuation as CheckedContinuation<Void, any Error>
-            guard let player = self?.player else {
-                continuation.resume(throwing: PlayerError.noPlayer)
-                return
-            }
-            
-            self?.playerContinuation = continuation
+    public func stopAndCancel() {
+        piper.cancel()
+        audioEngine.stop()
+        streamingDelegate.reset()
+    }
 
-            observerEnd = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: nil) { [weak self] _ in
-                self?.resumePlayerContinuation()
-            }
+    private func playStreaming(_ synthesize: @escaping () -> Void) async throws {
+        stopAndCancel()
 
-            statusObserver = item.observe(\.status, changeHandler: { [weak self] item, _ in
-                if let error = item.error {
-                    self?.resumePlayerContinuation(throwing: error)
+        let delegate = streamingDelegate
+        piper.delegate = delegate
+
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { [weak self] (continuation: CheckedContinuation<Void, any Error>) in
+                guard let self else {
+                    continuation.resume(throwing: PlayerError.engineNotReady)
+                    return
                 }
-            })
 
-            player.replaceCurrentItem(with: item)
-            player.play()
+                let resumed = AtomicFlag()
+
+                self.audioEngine.setCompletionHandler {
+                    if resumed.setIfUnset() {
+                        continuation.resume()
+                    }
+                }
+
+                DispatchQueue.global(qos: .userInitiated).async {
+                    if Task.isCancelled {
+                        if resumed.setIfUnset() {
+                            continuation.resume(throwing: CancellationError())
+                        }
+                        return
+                    }
+                    synthesize()
+                    delegate.flush()
+                }
+            }
+        } onCancel: { [weak self] in
+            self?.piper.cancel()
+            self?.audioEngine.stop()
         }
 
-        if let observerEnd {
-            NotificationCenter.default.removeObserver(observerEnd, name: .AVPlayerItemDidPlayToEndTime, object: item)
-        }
-        statusObserver?.invalidate()
-        await stopAndCancel()
-    }
-    
-    func resumePlayerContinuation(throwing error: Error? = nil) {
-        playerContinuationLock.withLock { [weak self] in
-            guard let continuation = self?.playerContinuation else {
-                return
-            }
-            
-            if let error {
-                continuation.resume(throwing: error)
-            } else {
-                continuation.resume()
-            }
-            self?.playerContinuation = nil
-        }
+        piper.delegate = nil
     }
 #endif
 }
-
-#if canImport(AVFoundation)
-fileprivate extension NSLock {
-    func withLock<T>(_ body: () -> T) -> T {
-        self.lock()
-        defer {
-            self.unlock()
-        }
-        return body()
-    }
-}
-#endif
