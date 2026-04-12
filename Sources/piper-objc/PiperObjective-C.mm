@@ -18,6 +18,7 @@
 
 @import piper_ssml;
 
+#import "PiperPhonemeAlignment.h"
 #import "NSString+stdStringAddtitons.h"
 
 typedef enum PiperStatus : NSInteger
@@ -81,6 +82,7 @@ static piper_synthesize_options get_piper_synthesize_options(SSMLNode *fragment,
 
 @interface Piper ()
 @property (atomic, assign) PiperStatus status;
+@property (nonatomic, readwrite) NSInteger sampleRate;
 @end
 
 @interface Piper ()
@@ -268,11 +270,13 @@ static piper_synthesize_options get_piper_synthesize_options(SSMLNode *fragment,
     }
     @synchronized(self)
     {
-        _operationQueue = [[NSOperationQueue alloc] init];
-        _operationQueue.name = [NSString stringWithFormat:@"%@Queue", NSStringFromClass([self class])];
-        _operationQueue.maxConcurrentOperationCount = 1;
-        _operationQueue.qualityOfService = NSQualityOfServiceUserInteractive;
-        
+        if (!_operationQueue)
+        {
+            _operationQueue = [[NSOperationQueue alloc] init];
+            _operationQueue.name = [NSString stringWithFormat:@"%@Queue", NSStringFromClass([self class])];
+            _operationQueue.maxConcurrentOperationCount = 1;
+            _operationQueue.qualityOfService = NSQualityOfServiceUserInteractive;
+        }
         return _operationQueue;
     }
 }
@@ -290,8 +294,40 @@ static piper_synthesize_options get_piper_synthesize_options(SSMLNode *fragment,
         if (size == 0) {
             break;
         }
+        if (self.sampleRate == 0) {
+            self.sampleRate = chunk.sample_rate;
+        }
         if (audioChunkReady) {
             audioChunkReady(chunk);
+        }
+        if ([self.delegate respondsToSelector:@selector(piperDidReceiveAudioChunk:withSize:sampleRate:alignments:)]) {
+            NSMutableArray<PiperPhonemeAlignment *> *alignments = [NSMutableArray array];
+            if (chunk.phonemes && chunk.alignments && chunk.num_phonemes > 0) {
+                size_t alignIdx = 0;
+                size_t i = 0;
+                while (i < chunk.num_phonemes && alignIdx < chunk.num_alignments) {
+                    char32_t phoneme = chunk.phonemes[i];
+                    if (phoneme == 0) {
+                        i++;
+                        continue;
+                    }
+                    NSInteger totalSamples = 0;
+                    size_t groupStart = i;
+                    while (i < chunk.num_phonemes && chunk.phonemes[i] == phoneme) {
+                        if (alignIdx < chunk.num_alignments) {
+                            totalSamples += chunk.alignments[alignIdx];
+                            alignIdx++;
+                        }
+                        i++;
+                    }
+                    [alignments addObject:[[PiperPhonemeAlignment alloc] initWithPhoneme:(uint32_t)phoneme
+                                                                            sampleCount:totalSamples]];
+                }
+            }
+            [self.delegate piperDidReceiveAudioChunk:chunk.samples
+                                            withSize:chunk.num_samples
+                                          sampleRate:chunk.sample_rate
+                                          alignments:alignments];
         }
     }
 }

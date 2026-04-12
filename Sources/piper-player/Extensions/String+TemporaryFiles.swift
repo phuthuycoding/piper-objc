@@ -13,8 +13,8 @@ extension String {
         return NSTemporaryDirectory().appending("\(tempFolderName)")
     }
 
-    static func temporaryPath(extesnion: String) -> String {
+    static func temporaryPath(fileExtension: String) -> String {
         let uuid = UUID().uuidString
-        return temporaryFolderPath.appending("/\(uuid).\(extesnion)")
+        return temporaryFolderPath.appending("/\(uuid).\(fileExtension)")
     }
 }

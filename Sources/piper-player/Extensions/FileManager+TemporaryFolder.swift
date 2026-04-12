@@ -15,7 +15,7 @@ extension FileManager {
     }
 
     func removeTempFolderIfNeeded(at path: String) throws {
-        if !fileExists(atPath: path) {
+        if fileExists(atPath: path) {
             try removeItem(atPath: path)
         }
     }
